@@ -10,6 +10,14 @@ if ngx.var.uri == "/yunohost/portalapi/nostr/auth-request" then
     return
 end
 
+-- OIDC is a public compatibility surface.  Its authorization endpoint
+-- performs the portal-session check itself; discovery, JWKS, token exchange,
+-- and userinfo must reach the portal API without a legacy SSO redirect.
+if ngx.var.uri == "/.well-known/openid-configuration"
+    or string.sub(ngx.var.uri, 1, 6) == "/oidc/" then
+    return
+end
+
 -- Just a note for the client to know that he passed through the SSO
 ngx.header["X-SSO-WAT"] = "You've just been SSOed"
 
