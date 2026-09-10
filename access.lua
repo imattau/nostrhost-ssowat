@@ -10,6 +10,12 @@ if ngx.var.uri == "/yunohost/portalapi/nostr/auth-request" then
     return
 end
 
+-- The portal owns its own login and session UI.  Let its public SPA routes
+-- reach the portal instead of redirecting them back through SSOwat.
+if string.sub(ngx.var.uri, 1, 13) == "/yunohost/sso/" then
+    return
+end
+
 -- OIDC is a public compatibility surface.  Its authorization endpoint
 -- performs the portal-session check itself; discovery, JWKS, token exchange,
 -- and userinfo must reach the portal API without a legacy SSO redirect.
