@@ -4,6 +4,12 @@
 -- This file is executed at every request on a protected domain or server.
 --
 
+-- The auth_request subrequest is protected by NGINX's `internal` directive
+-- and must reach the portal API without being redirected by SSOwat first.
+if ngx.var.uri == "/yunohost/portalapi/nostr/auth-request" then
+    return
+end
+
 -- Just a note for the client to know that he passed through the SSO
 ngx.header["X-SSO-WAT"] = "You've just been SSOed"
 
@@ -44,13 +50,15 @@ function cached_jwt_verify(data, secret)
         cache:set(data, cached, 120)
         logger:debug("Result saved in cache")
         local headers = { YNH_USER = decoded["user"], YNH_USER_EMAIL = decoded["email"],
-            YNH_USER_FULLNAME = decoded["fullname"]}
+            YNH_USER_FULLNAME = decoded["fullname"], ["X-Remote-User"] = decoded["user"],
+            ["X-Remote-Email"] = decoded["email"], ["X-Remote-Fullname"] = decoded["fullname"]}
         return decoded['id'], decoded['host'], decoded["user"], decoded["pwd"], headers, err
     else
         logger:debug("Result found in cache")
         local decoded = json.decode(res)
         local headers = { YNH_USER = decoded["user"], YNH_USER_EMAIL = decoded["email"],
-            YNH_USER_FULLNAME = decoded["fullname"]}
+            YNH_USER_FULLNAME = decoded["fullname"], ["X-Remote-User"] = decoded["user"],
+            ["X-Remote-Email"] = decoded["email"], ["X-Remote-Fullname"] = decoded["fullname"]}
         return decoded['id'], decoded['host'], decoded["user"], decoded["pwd"], headers, nil
     end
 end
@@ -111,6 +119,24 @@ local authUserHeaders = nil
 function check_authentication()
 
     -- cf. src/authenticators/ldap_ynhuser.py in YunoHost to see how the cookie is actually created
+
+    -- Transition mode: when NGINX has already run the internal auth_request,
+    -- consume only its server-populated variables. Do not fall back to the
+    -- Lua JWT validator in this mode; a missing auth result must deny access.
+    if conf["auth_request"] == true then
+        local remote_user = ngx.var.nostrhost_remote_user
+        if remote_user == nil or remote_user == "" then
+            return false, nil, nil, nil
+        end
+        local headers = {
+            ["X-Remote-User"] = remote_user,
+            ["X-Remote-Email"] = ngx.var.nostrhost_remote_email,
+            ["X-Remote-Fullname"] = ngx.var.nostrhost_remote_fullname,
+            ["X-Nostr-Pubkey"] = ngx.var.nostrhost_pubkey,
+            ["X-Nostr-Npub"] = ngx.var.nostrhost_npub,
+        }
+        return true, remote_user, "-", headers
+    end
 
     local cookie = ngx.var["cookie_" .. conf["cookie_name"]]
     if cookie == nil or COOKIE_SECRET == nil then
@@ -192,6 +218,30 @@ local permission = nil
 local longest_match = ""
 
 ngx_full_url = ngx.var.host..ngx.var.uri
+
+-- Per-permission migration contract. The application must also include the
+-- NostrHost auth_request snippet in its NGINX location; this exemption only
+-- removes the duplicate legacy cookie enforcement for that declared URI.
+-- With the default false/missing value, normal SSOwat behavior is unchanged.
+for _, permission_infos in pairs(conf["permissions"]) do
+    if permission_infos["auth_request"] == true and permission_infos["uris"] then
+        for _, prefix in pairs(permission_infos["uris"]) do
+            local match = nil
+            if string.starts(prefix, "re:") then
+                local pattern = string.sub(prefix, 4, string.len(prefix))
+                if not string.starts(pattern, "^") then
+                    pattern = "^"..pattern
+                end
+                match = rex.match(ngx_full_url, pattern)
+            elseif string.starts(ngx_full_url, prefix) then
+                match = prefix
+            end
+            if match ~= nil then
+                return
+            end
+        end
+    end
+end
 
 for permission_name, permission_infos in pairs(conf["permissions"]) do
     if next(permission_infos['uris']) ~= nil then

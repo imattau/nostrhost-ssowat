@@ -52,6 +52,7 @@ Only the `portal_domain` SSOwat configuration parameters is required, but it is 
 - `cookie_secret_file`: Where the secret used for signing and encrypting cookie is stored. It should only be readable by root.
 - `cookie_name`: The name of the cookie used for authentication. Its content is expected to be a JWT signed with the cookie secret and should contain a key `user` and `password` (which is needed for Basic HTTP Auth). Because JWT is only encoded and signed (not encrypted), the `password` is expected to be encrypted using the cookie secret.
 - `session_folder`: A path to a folder where files exists for any valid valid session id. SSOwat will check for the last modification date to confirm that the session is not expired.
+- `auth_request`: When `true`, trust only the NGINX auth-request variables (`nostrhost_remote_user`, `nostrhost_remote_email`, `nostrhost_remote_fullname`, `nostrhost_pubkey`, and `nostrhost_npub`) and do not use the legacy Lua JWT validator. YunoHost keeps this disabled until generated server-level routing enables auth-request before SSOwat policy evaluation.
 - `domain_portal_urls`: Location of the portal to use for login and browsing apps, to redirect to when access to some route is denied
 - `redirected_urls`: Array of URLs and/or URIs to redirect and their redirect URI/URL (**example**: `{ "/": "example.org/subpath" }`).
 
@@ -62,6 +63,7 @@ The list of permissions depicted as follows:
 ```json
 "myapp.main": {
     "auth_header": true,
+    "auth_request": false,
     "label": "MyApp",
     "public": true,
     "show_tile": true,
@@ -97,9 +99,20 @@ The list of permissions depicted as follows:
 }
 ```
 
+Set `auth_request` to `true` only when the application's NGINX location also
+includes the NostrHost auth-request parameters. SSOwat then leaves that URI
+to NGINX `auth_request`; the default is `false`, preserving the legacy
+cookie/session validator.
+
 #### auth_header
 
 Does the SSO add an authentication header that allows certain apps to connect automatically? (**True by default**)
+
+When enabled for an authenticated request, SSOwat also passes the standard
+identity headers `X-Remote-User`, `X-Remote-Email`, and `X-Remote-Fullname`.
+These are compatibility headers for applications migrating away from the
+legacy `YNH_*` names; they are derived from the validated portal session and
+cannot be supplied by the client.
 
 #### public
 
